@@ -116,7 +116,7 @@ def compute_late_minutes(punch_in_utc: datetime, shift_start: str, attendance_da
     year, month, day = map(int, attendance_date.split("-"))
     start_h, start_m = map(int, shift_start.split(":"))
     
-    shift_start_ist = IST.localize(datetime(year, month, day, start_h, start_m, 0))
+    shift_start_ist = datetime(year, month, day, start_h, start_m, 0, tzinfo=IST)
     punch_in_ist = to_ist(punch_in_utc)
     
     diff_seconds = (punch_in_ist - shift_start_ist).total_seconds()
@@ -151,7 +151,7 @@ def compute_overtime_minutes(punch_out_utc: datetime, shift_end: str, attendance
     else:
         shift_end_date = datetime(year, month, day)
     
-    shift_end_ist = IST.localize(shift_end_date.replace(hour=end_h, minute=end_m, second=0))
+    shift_end_ist = shift_end_date.replace(hour=end_h, minute=end_m, second=0, tzinfo=IST)
     punch_out_ist = to_ist(punch_out_utc)
     
     diff_seconds = (punch_out_ist - shift_end_ist).total_seconds()
