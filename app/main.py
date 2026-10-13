@@ -1,60 +1,53 @@
 """
-Employee Attendance & Analytics API - Complete Implementation
+Employee Attendance & Analytics API
 
-Run:  uvicorn app.main:app --port 8000
-Env:  MONGO_URI, MONGO_DB (a local .env is loaded for convenience)
+Run with: uvicorn app.main:app --port 8000
+Env vars: MONGO_URI, MONGO_DB
 """
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Any
+from typing import Optional
 from decimal import Decimal, ROUND_HALF_UP
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
-from pymongo import MongoClient, ASCENDING, DESCENDING, IndexModel
+from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import DuplicateKeyError
 
 load_dotenv()
 
+# MongoDB setup
 client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"), tz_aware=True)
 db = client[os.getenv("MONGO_DB", "attendance_db")]
 
+# IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 app = FastAPI(title="Employee Attendance & Analytics API", version="2.0.0")
 
 
-# --------------------------------------------------------------------------- #
-# Database initialization - create indexes at startup
-# --------------------------------------------------------------------------- #
+# Create indexes on startup
 @app.on_event("startup")
 def create_indexes():
-    """Create all required indexes idempotently"""
-    # Unique index on emp_code for employees
+    # Employees indexes
     db.employees.create_index([("emp_code", ASCENDING)], unique=True)
-    # Index for employee listing by department
     db.employees.create_index([("department", ASCENDING), ("emp_code", ASCENDING)])
+    db.employees.create_index([("joined_on", ASCENDING)])
     
-    # Compound unique index for attendance logs (emp_code, date)
+    # Attendance logs indexes
     db.attendance_logs.create_index([("emp_code", ASCENDING), ("date", ASCENDING)], unique=True)
-    # Index for listing attendance with filters
     db.attendance_logs.create_index([("date", DESCENDING), ("emp_code", ASCENDING)])
     db.attendance_logs.create_index([("status", ASCENDING)])
-    # Index for finding open punch records
     db.attendance_logs.create_index([("emp_code", ASCENDING), ("punch_in", ASCENDING)])
-    # Indexes for analytics
     db.attendance_logs.create_index([("date", ASCENDING)])
-    db.employees.create_index([("joined_on", ASCENDING)])
 
 
-# --------------------------------------------------------------------------- #
-# Helper functions
-# --------------------------------------------------------------------------- #
+# Utility functions for datetime conversion
 def epoch_ms_to_datetime(epoch_ms: int) -> datetime:
-    """Convert epoch milliseconds to UTC datetime, truncated to seconds"""
+    """Convert epoch milliseconds to UTC datetime (truncated to seconds)"""
     dt = datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
-    return dt.replace(microsecond=0)
+    return dt.replace(microsecond=0)  # Rule: truncate to seconds
 
 
 def datetime_to_epoch_ms(dt: datetime) -> int:
@@ -69,8 +62,9 @@ def to_ist(dt: datetime) -> datetime:
     return dt.astimezone(IST)
 
 
+# R8: ROUND_HALF_UP implementation (not Python's default banker's rounding)
 def half_up_round(value: float, decimals: int) -> float:
-    """Round using ROUND_HALF_UP (not Python's default banker's rounding)"""
+    """Round using ROUND_HALF_UP as specified in R8"""
     if value is None:
         return None
     d = Decimal(str(value))
@@ -83,29 +77,28 @@ def half_up_round(value: float, decimals: int) -> float:
         return float((d * factor).quantize(Decimal('1'), rounding=ROUND_HALF_UP) / factor)
 
 
+# R1: Calculate attendance date considering IST timezone and overnight shifts
 def get_attendance_date(punch_in_utc: datetime, shift_end: str) -> str:
     """
-    Compute attendance date per R1.
-    For overnight shifts (shift_end <= shift_start), a punch-in whose IST time
-    is earlier than shift_end belongs to the shift that started the previous day.
+    For overnight shifts, if punch time is before shift_end, 
+    it belongs to previous day's shift
     """
     punch_in_ist = to_ist(punch_in_utc)
     punch_time = punch_in_ist.time()
     
-    # Parse shift_end
     end_h, end_m = map(int, shift_end.split(":"))
     shift_end_time = datetime.min.replace(hour=end_h, minute=end_m).time()
     
-    # If punch time is before shift end time, it might be an overnight continuation
+    # Check if this is overnight shift continuation
     if punch_time < shift_end_time:
-        # This belongs to previous day's shift
+        # Belongs to previous day
         return (punch_in_ist.date() - timedelta(days=1)).isoformat()
     else:
         return punch_in_ist.date().isoformat()
 
 
 def is_overnight_shift(shift_start: str, shift_end: str) -> bool:
-    """Check if a shift is overnight (shift_end <= shift_start)"""
+    """Check if shift is overnight"""
     start_h, start_m = map(int, shift_start.split(":"))
     end_h, end_m = map(int, shift_end.split(":"))
     start_mins = start_h * 60 + start_m
@@ -113,53 +106,47 @@ def is_overnight_shift(shift_start: str, shift_end: str) -> bool:
     return end_mins <= start_mins
 
 
+# R2: Late calculation with 10-minute grace period
 def compute_late_minutes(punch_in_utc: datetime, shift_start: str, attendance_date: str) -> int:
     """
-    Compute late minutes per R2.
-    Grace period is 10 minutes. Late only if strictly more than 10:00 after shift_start.
-    late_minutes = floor(minutes elapsed since shift_start) if late, else 0.
+    Grace period is 10 minutes. Late only if STRICTLY more than 10:00 after shift_start.
+    Returns floor of minutes elapsed since shift_start.
     """
-    # Build shift start datetime in IST for the attendance date
-    date_h, date_m, date_s = map(int, attendance_date.split("-"))
+    # Build shift start time in IST for the attendance date
+    year, month, day = map(int, attendance_date.split("-"))
     start_h, start_m = map(int, shift_start.split(":"))
     
-    shift_start_ist = IST.localize(datetime(date_h, date_m, date_s, start_h, start_m, 0))
+    shift_start_ist = IST.localize(datetime(year, month, day, start_h, start_m, 0))
     punch_in_ist = to_ist(punch_in_utc)
     
-    # Calculate minutes difference
     diff_seconds = (punch_in_ist - shift_start_ist).total_seconds()
     diff_minutes = diff_seconds / 60
     
-    # Grace period is 10 minutes - late only if strictly more than 10
+    # Late only if strictly > 10 minutes
     if diff_minutes > 10:
-        return int(diff_minutes)  # floor
+        return int(diff_minutes)
     return 0
 
 
+# R4: Work hours calculation
 def compute_work_hours(punch_in_utc: datetime, punch_out_utc: datetime) -> float:
-    """
-    Compute work hours per R4.
-    (punch_out - punch_in) in seconds / 3600, rounded to 2 decimals half-up.
-    """
+    """Calculate work hours with ROUND_HALF_UP to 2 decimals"""
     seconds = (punch_out_utc - punch_in_utc).total_seconds()
     hours = seconds / 3600
     return half_up_round(hours, 2)
 
 
+# R3: Overtime calculation (minimum 30 minutes)
 def compute_overtime_minutes(punch_out_utc: datetime, shift_end: str, attendance_date: str, shift_start: str) -> int:
     """
-    Compute overtime minutes per R3.
-    overtime_minutes = floor(minutes between shift_end and punch_out), 
-    counted only when that is >= 30; otherwise 0.
-    For overnight shifts, shift_end falls on the next calendar day.
+    Overtime counted only if >= 30 minutes after shift_end.
+    For overnight shifts, shift_end is next day.
     """
-    # Parse attendance date
     year, month, day = map(int, attendance_date.split("-"))
     end_h, end_m = map(int, shift_end.split(":"))
     
-    # Determine if overnight shift
+    # For overnight shifts, shift end is on next day
     if is_overnight_shift(shift_start, shift_end):
-        # Shift end is next day
         shift_end_date = datetime(year, month, day) + timedelta(days=1)
     else:
         shift_end_date = datetime(year, month, day)
@@ -168,30 +155,30 @@ def compute_overtime_minutes(punch_out_utc: datetime, shift_end: str, attendance
     punch_out_ist = to_ist(punch_out_utc)
     
     diff_seconds = (punch_out_ist - shift_end_ist).total_seconds()
-    diff_minutes = int(diff_seconds / 60)  # floor
+    diff_minutes = int(diff_seconds / 60)
     
-    # Only count if >= 30 minutes
+    # Only count if >= 30 minutes overtime
     if diff_minutes >= 30:
         return diff_minutes
     return 0
 
 
+# R5: Half day check
 def compute_half_day(work_hours: float) -> bool:
-    """Compute half_day per R5. True when work_hours < 4.50"""
+    """Half day if work_hours < 4.50"""
     if work_hours is None:
         return False
     return work_hours < 4.50
 
 
 def is_presence_status(status: str) -> bool:
-    """Check if status counts as present per R6"""
+    """R6: Check if status counts as present"""
     return status in ["PRESENT", "WFH", "ON_DUTY"]
 
 
+# R7: Calculate working days in month
 def get_working_days_in_month(year: int, month: int, joined_on: str) -> int:
-    """
-    Count working days (Mon-Fri) in a month, from joined_on if applicable (R7).
-    """
+    """Count Mon-Fri from joined_on if applicable"""
     from calendar import monthrange
     import datetime as dt
     
@@ -208,16 +195,14 @@ def get_working_days_in_month(year: int, month: int, joined_on: str) -> int:
     end_date = dt.date(year, month, last_day)
     
     while current <= end_date:
-        if current.weekday() < 5:  # Mon-Fri
+        if current.weekday() < 5:  # Mon=0, Fri=4
             count += 1
         current += dt.timedelta(days=1)
     
     return count
 
 
-# --------------------------------------------------------------------------- #
-# Pydantic Models
-# --------------------------------------------------------------------------- #
+# Pydantic models for request/response
 class EmployeeIn(BaseModel):
     emp_code: str = Field(..., pattern=r'^EMP\d{4,6}$')
     name: str = Field(..., min_length=1, max_length=100)
@@ -226,12 +211,6 @@ class EmployeeIn(BaseModel):
     shift_start: str = Field(default="09:30", pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
     shift_end: str = Field(default="18:30", pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
     joined_on: str = Field(..., pattern=r'^\d{4}-\d{2}-\d{2}$')
-    
-    @field_validator('shift_start', 'shift_end')
-    @classmethod
-    def validate_shift_times(cls, v, info):
-        # Validate format separately
-        return v
 
 
 class PunchInIn(BaseModel):
@@ -267,11 +246,9 @@ class RegularizeIn(BaseModel):
         return v
 
 
-# --------------------------------------------------------------------------- #
-# Helper to format attendance record for API response
-# --------------------------------------------------------------------------- #
+# Helper to format attendance record for response
 def format_attendance_record(doc: dict) -> dict:
-    """Convert MongoDB document to API response format"""
+    """Convert MongoDB doc to API response"""
     result = {
         "emp_code": doc["emp_code"],
         "date": doc["date"],
@@ -285,7 +262,7 @@ def format_attendance_record(doc: dict) -> dict:
         "history": []
     }
     
-    # Format history entries
+    # Format history - convert datetime fields
     for h in doc.get("history", []):
         entry = {
             "at": datetime_to_epoch_ms(h["at"]),
@@ -295,6 +272,7 @@ def format_attendance_record(doc: dict) -> dict:
         }
         for field, change in h["changes"].items():
             if field in ["punch_in", "punch_out"]:
+                # These are datetime fields
                 entry["changes"][field] = {
                     "from": datetime_to_epoch_ms(change["from"]) if change["from"] else None,
                     "to": datetime_to_epoch_ms(change["to"]) if change["to"] else None
@@ -307,7 +285,7 @@ def format_attendance_record(doc: dict) -> dict:
 
 
 def format_employee(doc: dict) -> dict:
-    """Convert employee document to API response format"""
+    """Convert employee doc to API response"""
     doc = doc.copy()
     doc.pop("_id", None)
     if "created_at" in doc:
@@ -315,12 +293,11 @@ def format_employee(doc: dict) -> dict:
     return doc
 
 
-# --------------------------------------------------------------------------- #
-# System Endpoints
-# --------------------------------------------------------------------------- #
+# API Endpoints
+
 @app.get("/health")
 def health():
-    """Health check - ping MongoDB"""
+    """Health check with MongoDB ping"""
     try:
         db.command("ping")
         return {"status": "ok"}
@@ -328,13 +305,9 @@ def health():
         raise HTTPException(503, "Database unavailable")
 
 
-# --------------------------------------------------------------------------- #
-# Employee Endpoints
-# --------------------------------------------------------------------------- #
 @app.post("/employees", status_code=201)
 def create_employee(body: EmployeeIn):
-    """Create a new employee"""
-    # Validate shift_start != shift_end
+    """Create employee"""
     if body.shift_start == body.shift_end:
         raise HTTPException(422, "shift_start must differ from shift_end")
     
@@ -355,7 +328,7 @@ def list_employees(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100)
 ):
-    """List employees with optional department filter"""
+    """List employees with optional filtering"""
     query = {}
     if department:
         query["department"] = department
@@ -368,7 +341,7 @@ def list_employees(
                  .skip(skip)
                  .limit(page_size))
     
-    # Format created_at to epoch ms
+    # Convert created_at to epoch ms
     for item in items:
         if "created_at" in item:
             item["created_at"] = datetime_to_epoch_ms(item["created_at"])
@@ -381,9 +354,6 @@ def list_employees(
     }
 
 
-# --------------------------------------------------------------------------- #
-# Attendance Endpoints
-# --------------------------------------------------------------------------- #
 @app.post("/attendance/punch-in", status_code=201)
 def punch_in(body: PunchInIn):
     """Record a punch-in"""
