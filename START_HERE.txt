@@ -1,0 +1,78 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    START YOUR ASSIGNMENT - 5 STEPS                        ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+📍 You are here: candidate_kit/ folder
+
+
+STEP 1️⃣: START MONGODB
+─────────────────────────────────────────────────────────────────────────────
+Open terminal and run:
+
+    docker run -d -p 27017:27017 --name attendance-mongo mongo:7
+
+(Or use MongoDB Atlas free tier: https://www.mongodb.com/cloud/atlas)
+
+
+STEP 2️⃣: SETUP PYTHON
+─────────────────────────────────────────────────────────────────────────────
+In the candidate_kit folder:
+
+Windows:                          Mac/Linux:
+    python -m venv .venv              python -m venv .venv
+    .venv\Scripts\activate            source .venv/bin/activate
+    pip install -r requirements.txt   pip install -r requirements.txt
+
+
+STEP 3️⃣: CONFIGURE
+─────────────────────────────────────────────────────────────────────────────
+    copy .env.example .env        (Windows)
+    cp .env.example .env          (Mac/Linux)
+
+Edit .env file:
+    MONGO_URI=mongodb://localhost:27017
+    MONGO_DB=attendance_db
+
+
+STEP 4️⃣: LOAD SAMPLE DATA
+─────────────────────────────────────────────────────────────────────────────
+    python sample_seed.py
+
+Expected output:
+    loaded 6 documents into 'attendance_db.employees'
+    loaded 9 documents into 'attendance_db.attendance_logs'
+
+
+STEP 5️⃣: START API
+─────────────────────────────────────────────────────────────────────────────
+    uvicorn app.main:app --port 8000 --reload
+
+Expected output:
+    INFO: Uvicorn running on http://127.0.0.1:8000
+
+✅ API is running!
+
+
+TEST IT:
+─────────────────────────────────────────────────────────────────────────────
+Open browser: http://localhost:8000/docs
+
+Try:
+• GET /health
+• GET /employees
+• GET /analytics/employees/EMP0001/monthly?month=2026-07
+
+
+STOP IT:
+─────────────────────────────────────────────────────────────────────────────
+Press Ctrl+C (to stop API)
+docker stop attendance-mongo (to stop MongoDB)
+
+
+STUCK? See QUICK_START_GUIDE.txt for detailed troubleshooting.
+
+READY TO UPLOAD? See HOW_TO_UPLOAD.txt for GitHub instructions.
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                           YOU'RE ALL SET! 🚀                              ║
+╚═══════════════════════════════════════════════════════════════════════════╝

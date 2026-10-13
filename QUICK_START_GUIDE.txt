@@ -1,0 +1,276 @@
+================================================================================
+QUICK START GUIDE - Run Your Assignment Locally
+================================================================================
+
+Follow these steps to start and test your Employee Attendance API project.
+
+================================================================================
+STEP 1: START MONGODB
+================================================================================
+
+Option A - Using Docker (Recommended):
+--------------------------------------
+Open terminal and run:
+
+    docker run -d -p 27017:27017 --name attendance-mongo mongo:7
+
+This starts MongoDB on port 27017.
+
+To stop later:     docker stop attendance-mongo
+To start again:    docker start attendance-mongo
+To remove:         docker rm attendance-mongo
+
+
+Option B - MongoDB Atlas (Cloud, Free):
+---------------------------------------
+1. Go to https://www.mongodb.com/cloud/atlas
+2. Sign up for free account
+3. Create a free M0 cluster
+4. Get your connection string (looks like):
+   mongodb+srv://username:password@cluster.mongodb.net/
+
+Use this connection string in Step 3.
+
+
+================================================================================
+STEP 2: SETUP PYTHON ENVIRONMENT
+================================================================================
+
+Open terminal in the 'candidate_kit' folder and run:
+
+Windows:
+--------
+    python -m venv .venv
+    .venv\Scripts\activate
+    pip install -r requirements.txt
+
+Mac/Linux:
+----------
+    python -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+
+You should see (.venv) in your terminal prompt.
+
+
+================================================================================
+STEP 3: CONFIGURE ENVIRONMENT
+================================================================================
+
+1. Copy the .env.example file to .env:
+
+   Windows:    copy .env.example .env
+   Mac/Linux:  cp .env.example .env
+
+2. Open .env file in any text editor
+
+3. Set your MongoDB connection:
+
+   For Docker (local):
+   -------------------
+   MONGO_URI=mongodb://localhost:27017
+   MONGO_DB=attendance_db
+
+   For MongoDB Atlas:
+   ------------------
+   MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/
+   MONGO_DB=attendance_db
+
+4. Save the file
+
+
+================================================================================
+STEP 4: SEED SAMPLE DATA
+================================================================================
+
+Load the sample employees and attendance records:
+
+    python sample_seed.py
+
+You should see:
+    loaded  6 documents into 'attendance_db.employees'
+    loaded  9 documents into 'attendance_db.attendance_logs'
+
+
+================================================================================
+STEP 5: START THE API SERVER
+================================================================================
+
+Run the FastAPI server:
+
+    uvicorn app.main:app --port 8000 --reload
+
+You should see:
+    INFO:     Uvicorn running on http://127.0.0.1:8000
+    INFO:     Application startup complete.
+
+The API is now running!
+
+Keep this terminal open. The server must stay running.
+
+
+================================================================================
+STEP 6: TEST THE API
+================================================================================
+
+Option A - Using Browser (Swagger UI):
+--------------------------------------
+1. Open browser and go to: http://localhost:8000/docs
+
+2. You'll see interactive API documentation
+
+3. Try these endpoints:
+   - GET /health - Check if API is working
+   - GET /employees - See sample employees
+   - GET /analytics/employees/EMP0001/monthly?month=2026-07
+
+
+Option B - Using Command Line (curl):
+-------------------------------------
+Open a NEW terminal (keep server running) and test:
+
+Health check:
+    curl http://localhost:8000/health
+
+List employees:
+    curl http://localhost:8000/employees
+
+Get monthly analytics:
+    curl "http://localhost:8000/analytics/employees/EMP0001/monthly?month=2026-07"
+
+Create new employee:
+    curl -X POST http://localhost:8000/employees ^
+      -H "Content-Type: application/json" ^
+      -d "{\"emp_code\":\"EMP9999\",\"name\":\"Test User\",\"email\":\"test@example.com\",\"department\":\"QA\",\"joined_on\":\"2026-01-01\"}"
+
+Punch in:
+    curl -X POST http://localhost:8000/attendance/punch-in ^
+      -H "Content-Type: application/json" ^
+      -d "{\"emp_code\":\"EMP9999\"}"
+
+
+Option C - Using Postman:
+-------------------------
+1. Open Postman
+2. Import from: http://localhost:8000/openapi.json
+3. Test any endpoint
+
+
+================================================================================
+STEP 7: STOP THE PROJECT
+================================================================================
+
+To stop the API server:
+    Press Ctrl+C in the terminal where uvicorn is running
+
+To stop MongoDB (if using Docker):
+    docker stop attendance-mongo
+
+To deactivate Python virtual environment:
+    deactivate
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Problem: "ModuleNotFoundError: No module named 'fastapi'"
+Solution: Make sure virtual environment is activated and run:
+          pip install -r requirements.txt
+
+Problem: "pymongo.errors.ServerSelectionTimeoutError"
+Solution: MongoDB is not running. Check:
+          - Docker container is running: docker ps
+          - Connection string in .env is correct
+
+Problem: "Port 8000 is already in use"
+Solution: Another process is using port 8000. Either:
+          - Kill that process, OR
+          - Use different port: uvicorn app.main:app --port 8001
+
+Problem: "Address already in use" (MongoDB)
+Solution: Port 27017 is busy. Check if MongoDB is already running:
+          docker ps
+          If yes, just use it. No need to start another.
+
+
+================================================================================
+QUICK COMMAND REFERENCE
+================================================================================
+
+Start MongoDB (Docker):
+    docker run -d -p 27017:27017 --name attendance-mongo mongo:7
+
+Activate Python environment:
+    Windows: .venv\Scripts\activate
+    Mac/Linux: source .venv/bin/activate
+
+Install dependencies:
+    pip install -r requirements.txt
+
+Seed data:
+    python sample_seed.py
+
+Run API server:
+    uvicorn app.main:app --port 8000 --reload
+
+Access API docs:
+    http://localhost:8000/docs
+
+Stop server:
+    Ctrl+C
+
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Explore the API using http://localhost:8000/docs
+2. Try all endpoints with sample data
+3. Read the code in app/main.py to understand implementation
+4. Review REVIEW.md to see what was fixed
+5. Check DECISIONS.md to understand design choices
+
+Once everything works, you're ready to upload to GitHub!
+See HOW_TO_UPLOAD.txt for instructions.
+
+
+================================================================================
+PROJECT STRUCTURE REMINDER
+================================================================================
+
+candidate_kit/
+├── app/
+│   └── main.py          ← Your API implementation
+├── sample_data/         ← JSON files to load
+├── .env                 ← Your MongoDB config (don't commit)
+├── requirements.txt     ← Python dependencies
+└── sample_seed.py       ← Script to load data
+
+
+================================================================================
+IMPORTANT NOTES
+================================================================================
+
+✓ Keep the .venv activated when working on the project
+✓ MongoDB must be running before starting the API
+✓ Sample data helps test the analytics endpoints
+✓ Use --reload flag during development (auto-restart on changes)
+✓ Never commit .env file (it's in .gitignore)
+✓ Check http://localhost:8000/docs for full API documentation
+
+
+================================================================================
+YOU'RE ALL SET!
+================================================================================
+
+Your assignment is working and ready to demonstrate.
+
+For interview preparation, review:
+- README_FOR_YOU.txt - How to explain your work
+- REVIEW.md - Defects you found and fixed
+- DECISIONS.md - Your architecture decisions
+
+Good luck! 🚀
+
+================================================================================
